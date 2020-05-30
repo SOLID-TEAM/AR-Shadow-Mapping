@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>WebGL Application</title>
+        <meta charset="utf-8">
+        <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+        <script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+        <script type="text/javascript" src="webgl-utils.js"></script>
+
+        <script id="shader-vs" type="x-shader/x-vertex">
+            attribute vec3 aVertexPosition;
+            //attribute vec2 aTextureCoord;
+
+            uniform mat4 uMVMatrix;
+            uniform mat4 uPMatrix;
+
+            //varying highp vec2 vTextureCoord;
+
+            void main(void) {
+                gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+                //vTextureCoord = aTextureCoord;
+            }
+        </script>
+        
+        <script id="shader-fs" type="x-shader/x-fragment">
+            precision mediump float;
+            //varying highp vec2 vTextureCoord;
+            //uniform sampler2D texture;
+
+            void main(void) {
+                //gl_FragColor = texture2D(texture, vec2(vTextureCoord.s, vTextureCoord.t)); //vec4(1.0,0.0,1.0,1.0);//
+                gl_FragColor = vec4(1.0, 0.6, 0.0, 1.0);
+            }
+        </script>
+        
+        <script type="text/javascript">
+
+            class cam {
+                constructor() {
+                    this.position = [0.0, 0.0, 5.0];
+                    this.yaw = 0;
+                    this.pitch = 0;
+                }
+                reset() {
+                    this.position = [0.0, 0.0, 5.0];
+                    this.yaw = 0;
+                    this.pitch = 0;
+                }
+            }
+            // Global variables
+            var gl;
+            var resources = {};
+            var entities = [];
+            var camera = new cam();
+           
+            var input = {
+                keys : [],
+                mouseButtons : [],
+                mousex : 0,
+                mousey : 0,
+                mousedx : 0,
+                mousedy : 0,
+                mousewheeldy : 0,
+                mousewheelspeed : 5,
+                mousepanspeed : 0.5
+            };
+
+            var time = {
+                deltaSeconds : 1.0 / 60,
+                lastTimeMillis : 0
+            };
+            
+            const ButtonState = {
+                IDLE : 'idle',
+                DOWN : 'down',
+                PRESSED: 'pressed',
+                UP : 'up'
+            };
+
+            
+            function initGL(canvas)
+            {    
+                var canvas = document.getElementById("webGL-canvas");
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+
+                try {
+                    gl = canvas.getContext("experimental-webgl");
+                    gl.viewportWidth = canvas.width;
+                    gl.viewportHeight = canvas.height;
+                } catch (e) {
+                }
+                if (!gl) {
+                    alert("Could not initialise WebGL, sorry :-(");
+                }
+            }
+
+
+            function getShader(id)
+            {
+                var shaderScript = document.getElementById(id);
+                if (!shaderScript) {
+                    return null;
+                }
+
+                var str = "";
+                var k = shaderScript.firstChild;
+                while (k) {
+                    if (k.nodeType == 3) {
+                        str += k.textContent;
+                    }
+                    k = k.nextSibling;
+                }
+
+                var shader;
+                if (shaderScript.type == "x-shader/x-fragment") {
+                    shader = gl.createShader(gl.FRAGMENT_SHADER);
+                } else if (shaderScript.type == "x-shader/x-vertex") {
+                    shader = gl.createShader(gl.VERTEX_SHADER);
+                } else {
+                    return null;
+                }
+
+                gl.shaderSource(shader, str);
+                gl.compileShader(shader);
+
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    alert(gl.getShaderInfoLog(shader));
+                    return null;
+                }
+
+                return shader;
+            }
+
+
+            function initShaders()
+            {
+                var fragmentShader = getShader("shader-fs");
+                var vertexShader = getShader("shader-vs");
+
+                resources.shaderProgram = gl.createProgram();
+                gl.attachShader(resources.shaderProgram, vertexShader);
+                gl.attachShader(resources.shaderProgram, fragmentShader);
+                gl.linkProgram(resources.shaderProgram);
+
+                if (!gl.getProgramParameter(resources.shaderProgram, gl.LINK_STATUS)) {
+                    alert("Could not initialise shaders");
+                }
+
+                gl.useProgram(resources.shaderProgram);
+
+                resources.shaderProgram.vertexPositionAttribute = gl.getAttribLocation(resources.shaderProgram, "aVertexPosition");
+                //resources.shaderProgram.textureCoordAttribute =    gl.getAttribLocation(resources.shaderProgram, "aTextureCoord");
+                gl.enableVertexAttribArray(resources.shaderProgram.vertexPositionAttribute);
+                //gl.enableVertexAttribArray(resources.shaderProgram.textureCoordAttribute);
+
+                resources.shaderProgram.pMatrixUniform = gl.getUniformLocation(resources.shaderProgram, "uPMatrix");
+                resources.shaderProgram.mvMatrixUniform = gl.getUniformLocation(resources.shaderProgram, "uMVMatrix");
+                //resources.shaderProgram.samplerUniform = gl.getUniformLocation(resources.shaderProgram, "texture");
+            }
+
+            /* function setTextureParams(texture) {
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.bindTexture(gl.TEXTURE_2D, null);
+            } */
+
+           /*  function loadTextureOnGPU() {
+                resources.texture = gl.createTexture();
+                resources.texture.image = new Image();
+                resources.texture.image.onload = function () {
+                    setTextureParams(resources.texture)
+                }
+                resources.texture.image.src = "textures/marvel.png";
+            } */
+
+            function initScene()
+            {
+                // teapot
+                var entity = {};
+                entity.transform = {};
+                entity.transform.position = [-2.0, 0.0, 0.0];
+                entity.transform.rotation = [0.0,0.0,0.0];
+                entity.transform.scale = [0.1, 0.1, 0.1];
+                entity.model = resources.modelTeapot;
+                entities.push(entity);
+                
+                // laptop
+                var entity = {};
+                entity.transform = {};
+                entity.transform.position = [2.0, -0.7, 0.0];
+                entity.transform.rotation = [-Math.PI * 0.5 ,0.0 ,0.0];
+                entity.transform.scale = [1.5,1.5,1.5];
+                entity.model = resources.modelLaptop;
+                entities.push(entity);
+            }
+
+            function drawScene()
+            {
+                gl.enable(gl.DEPTH_TEST);
+
+                gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+
+                gl.clearColor(0.0, 0.0, 0.0, 1.0);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                // projection matrix
+                var pMatrix = mat4.create();
+                mat4.identity(pMatrix);
+                mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 100.0, pMatrix);
+                gl.uniformMatrix4fv(resources.shaderProgram.pMatrixUniform, false, pMatrix);
+
+                 // view matrix
+                 var viewMatrix = mat4.create();
+                mat4.identity(viewMatrix);
+                var camPosCopy = vec3.create(camera.position);
+                mat4.translate(viewMatrix, vec3.negate(camPosCopy));
+                mat4.rotate(viewMatrix, camera.pitch, [1.0, 0.0, 0.0]);
+                mat4.rotate(viewMatrix, camera.yaw, [0.0, 1.0, 0.0]);
+
+                for (var i = 0; i < entities.length; ++i)
+                {
+                    var entity = entities[i];
+                    
+                    // async load model check
+                    if(entity.model.indexBuffer == null) continue;
+
+                    // vertex
+                    gl.bindBuffer(gl.ARRAY_BUFFER, entity.model.positionBuffer);
+                    gl.vertexAttribPointer(resources.shaderProgram.vertexPositionAttribute,
+                                            entity.model.positionBuffer.itemSize,
+                                            gl.FLOAT,
+                                            false,
+                                            0,0);
+                    // uv's
+                    /*  gl.bindBuffer(gl.ARRAY_BUFFER, entity.model.texCoordBuffer);
+                    gl.vertexAttribPointer(resources.shaderProgram.textureCoordAttribute,
+                                            entity.model.texCoordBuffer.itemSize,
+                                            gl.FLOAT,
+                                            false,
+                                            0,0); */
+                    
+                    // model matrix 
+                    var modelMatrix = mat4.create();
+                    mat4.identity(modelMatrix);
+                    mat4.translate(modelMatrix, entity.transform.position);
+                    mat4.rotate(modelMatrix, entity.transform.rotation[1], [0.0, 1.0, 0.0]);
+                    mat4.rotate(modelMatrix, entity.transform.rotation[0], [1.0, 0.0, 0.0]);
+                    mat4.rotate(modelMatrix, entity.transform.rotation[2], [0.0, 0.0, 1.0]);
+                    mat4.scale(modelMatrix, entity.transform.scale);
+                    
+                    // modelview matrix
+                    var mvMatrix = mat4.multiply(viewMatrix, modelMatrix, mat4.create());
+                    gl.uniformMatrix4fv(resources.shaderProgram.mvMatrixUniform, false, mvMatrix);
+
+                    // texture
+                   /*  gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, resources.texture);
+                    gl.uniform1i(resources.shaderProgram.samplerUniform, 0); */
+
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, entity.model.indexBuffer);
+                    gl.drawElements(gl.TRIANGLES, entity.model.indexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+                    
+                }
+
+            }
+
+            function Update() 
+            {
+                var d = new Date();
+                var timeMillis = d.getTime();
+                time.deltaSeconds = (timeMillis - time.lastTimeMillis) / 1000;
+                time.lastTimeMillis = timeMillis;
+
+                requestAnimationFrame(Update);
+                processInputEvents();
+                drawScene();
+            }
+
+            //* ----------------------- INPUT ----------------------- * //
+            // keyboard -----
+            function processInputEvents()
+            {
+                var speed = 20.0;
+
+                // keyboard
+                if(input.keys[87] == ButtonState.PRESSED) { // W
+                    camera.position[2] -= speed * time.deltaSeconds; // zoom in
+                }
+                if(input.keys[83] == ButtonState.PRESSED) { // S
+                    camera.position[2] += speed * time.deltaSeconds; // zoom out
+                }
+                if(input.keys[65] == ButtonState.PRESSED) { // A
+                    camera.position[0] -= speed * time.deltaSeconds;
+                }
+                if(input.keys[68] == ButtonState.PRESSED) { // D
+                    camera.position[0] += speed * time.deltaSeconds;
+                }
+                if(input.keys[82] == ButtonState.DOWN) { // R, reset cam
+                    camera.reset();
+                }
+
+                // mouse
+                if(input.mouseButtons[0] == ButtonState.PRESSED) // rotation
+                {
+                    camera.pitch += deg2Rad(input.mousedy / 5);
+                    camera.yaw += deg2Rad(input.mousedx / 5);
+                }
+
+                if(input.mouseButtons[1] == ButtonState.PRESSED) // pan
+                {
+                    camera.position[0] -= input.mousedx * input.mousepanspeed * time.deltaSeconds;
+                    camera.position[1] += input.mousedy * input.mousepanspeed * time.deltaSeconds;
+                }
+
+                // apply zoom if any
+                camera.position[2] += input.mousewheeldy * input.mousewheelspeed * time.deltaSeconds;
+
+                // update input states ----
+                // keyboard keys
+                for(var i = 0; i < input.keys.length; ++i)
+                {
+                    if(input.keys[i] == ButtonState.DOWN) input.keys[i] = ButtonState.PRESSED;
+                    if(input.keys[i] == ButtonState.UP) input.keys[i] = ButtonState.IDLE;
+                }
+                // mouse buttons
+                for(var i = 0; i < input.mouseButtons.length; ++i)
+                {
+                    if(input.mouseButtons[i] == ButtonState.DOWN) input.mouseButtons[i] = ButtonState.PRESSED;
+                    if(input.mouseButtons[i] == ButtonState.UP) input.mouseButtons[i] = ButtonState.IDLE;
+                }
+
+                input.mousedx = 0;
+                input.mousedy = 0;
+                input.mousewheeldy = 0;
+
+            }
+            // * --------------------------------------------------- * //
+
+            // * --------------- Input Handlers -------------------- * //
+            function handleKeyDown() {
+                input.keys[event.keyCode] = ButtonState.DOWN;
+            }
+            function handleKeyUp() {
+                input.keys[event.keyCode] = ButtonState.UP;
+            }
+            // --------------
+            // mouse
+            function handleMouseDown() {
+                input.mouseButtons[event.button] = ButtonState.DOWN;
+                input.mousex = event.clientX;
+                input.mousey = event.clientY;
+                
+            }
+            function handleMouseUp() {
+                input.mouseButtons[event.button] = ButtonState.UP;
+            }
+            
+            function handleMouseMove()
+            {
+                var newX = event.clientX;
+                var newY = event.clientY;
+                
+                input.mousedx = newX - input.mousex;
+                input.mousedy = newY - input.mousey;
+
+                input.mousex = newX;
+                input.mousey = newY;
+            }
+
+            function handleMouseWheel()
+            {
+                input.mousewheeldy = event.deltaY;
+            }
+            // * --------------------------------------------------- * //
+            
+            function loadModelOnGPU(model, modelData)
+            {
+                // normals
+                model.normalBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, model.normalBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(modelData.vertexNormals), gl.STATIC_DRAW);
+                model.normalBuffer.itemSize = 3;
+
+                // uv's
+                model.texCoordBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, model.texCoordBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(modelData.vertexTextureCoords), gl.STATIC_DRAW);
+                model.texCoordBuffer.itemSize = 2;
+
+                // vertex
+                model.positionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, model.positionBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(modelData.vertexPositions), gl.STATIC_DRAW);
+                model.positionBuffer.itemSize = 3;
+
+                // indices
+                model.indexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, model.indexBuffer);
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(modelData.indices), gl.STATIC_DRAW);
+                model.indexBuffer.itemSize = 1;
+                model.indexBuffer.numItems = modelData.indices.length;
+            }
+
+            function requestModel(filename)
+            {
+                var model = {};
+                var request = new XMLHttpRequest();
+                request.open("GET", filename);
+                request.onreadystatechange = function () {
+                    if(request.readyState == 4) {
+                        var parsedJson = JSON.parse(request.responseText);
+                        loadModelOnGPU(model, parsedJson);
+                    }
+                }
+                request.send();
+                return model;
+            }
+
+            function initModels()
+            {
+                resources.modelTeapot = requestModel("Models/Teapot.json");
+                resources.modelLaptop = requestModel("Models/Laptop.json");
+            }
+
+            function initInput()
+            {
+                for (var i = 0; i < 300; ++i) { input.keys[i] = ButtonState.IDLE}
+                for (var i = 0; i < 10; ++i) { input.mouseButtons[i] = ButtonState.IDLE}
+
+                document.onkeydown = handleKeyDown;
+                document.onkeyup = handleKeyUp;
+                document.onmousedown = handleMouseDown;
+                document.onmouseup = handleMouseUp;
+                document.onmousemove = handleMouseMove;
+                document.onwheel = handleMouseWheel;
+            }
+
+            function initTime()
+            {
+                var d = new Date();
+                time.lastTimeMillis = d.getTime();
+            }
+
+            function webGLStart()
+            {
+                var canvas = document.getElementById("webGL-canvas");
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+
+                initGL(canvas);
+                initTime();
+                initInput();
+                initShaders();
+                //loadSceneOnGPU();
+                //loadTextureOnGPU();
+
+                gl.clearColor(0.0, 0.0, 0.0, 1.0);
+                gl.enable(gl.DEPTH_TEST);
+
+                initModels();
+                initScene();
+                Update();
+            }
+
+            // Tools
+            function deg2Rad(degrees)
+            {
+                return degrees * (Math.PI / 180);
+            }
+
+        </script>
+
+    </head>
+
+    <body onload="webGLStart();" onresize="webGLStart();">
+        <canvas id="webGL-canvas" style="border: none; width:100%; height:100%; margin: 0 auto;"></canvas>    
+    </body>
+
+</html>
