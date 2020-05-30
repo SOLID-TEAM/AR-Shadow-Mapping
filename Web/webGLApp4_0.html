@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>WebGL Application</title>
+        <meta charset="utf-8">
+        <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+        <script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+        <script type="text/javascript" src="webgl-utils.js"></script>
+
+        <script id="shader-vs" type="x-shader/x-vertex">
+            attribute vec3 aVertexPosition;
+            attribute vec2 aTextureCoord;
+
+            uniform mat4 uMVMatrix;
+            uniform mat4 uPMatrix;
+
+            varying highp vec2 vTextureCoord;
+
+            void main(void) {
+                gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+                vTextureCoord = aTextureCoord;
+            }
+        </script>
+        
+        <script id="shader-fs" type="x-shader/x-fragment">
+            precision mediump float;
+            varying highp vec2 vTextureCoord;
+            uniform sampler2D texture;
+
+            void main(void) {
+                gl_FragColor = texture2D(texture, vec2(vTextureCoord.s, vTextureCoord.t)); //vec4(1.0,0.0,1.0,1.0);//
+            }
+        </script>
+        
+        <script type="text/javascript">
+
+            // Global variables
+            var gl;
+            var resources = {};
+            var entities = [];
+            var camera = {
+                position : [0.0, 0.0, 5.0],
+                yaw : 0.0,
+                pitch : 0.0
+            };
+            
+            var input = {
+                keys : [],
+                mouseButtons : [],
+                mousex : 0,
+                mousey : 0,
+                mousedx : 0,
+                mousedy : 0
+            }
+            // keys dictionary
+            var currentlyPressedKeys = {};
+            var currentMouseButtonState = {};
+            var mouseDown = false;
+
+            //var myTexture;
+
+            // camera transformations
+            var mouseRotationMatrix = mat4.create();
+            mat4.identity(mouseRotationMatrix);
+            
+            var lastMouseX = null;
+            var lastMouseY = null;
+            
+
+            function initGL(canvas)
+            {    
+                var canvas = document.getElementById("webGL-canvas");
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+
+                try {
+                    gl = canvas.getContext("experimental-webgl");
+                    gl.viewportWidth = canvas.width;
+                    gl.viewportHeight = canvas.height;
+                } catch (e) {
+                }
+                if (!gl) {
+                    alert("Could not initialise WebGL, sorry :-(");
+                }
+            }
+
+
+            function getShader(id)
+            {
+                var shaderScript = document.getElementById(id);
+                if (!shaderScript) {
+                    return null;
+                }
+
+                var str = "";
+                var k = shaderScript.firstChild;
+                while (k) {
+                    if (k.nodeType == 3) {
+                        str += k.textContent;
+                    }
+                    k = k.nextSibling;
+                }
+
+                var shader;
+                if (shaderScript.type == "x-shader/x-fragment") {
+                    shader = gl.createShader(gl.FRAGMENT_SHADER);
+                } else if (shaderScript.type == "x-shader/x-vertex") {
+                    shader = gl.createShader(gl.VERTEX_SHADER);
+                } else {
+                    return null;
+                }
+
+                gl.shaderSource(shader, str);
+                gl.compileShader(shader);
+
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    alert(gl.getShaderInfoLog(shader));
+                    return null;
+                }
+
+                return shader;
+            }
+
+
+            function initShaders()
+            {
+                var fragmentShader = getShader("shader-fs");
+                var vertexShader = getShader("shader-vs");
+
+                resources.shaderProgram = gl.createProgram();
+                gl.attachShader(resources.shaderProgram, vertexShader);
+                gl.attachShader(resources.shaderProgram, fragmentShader);
+                gl.linkProgram(resources.shaderProgram);
+
+                if (!gl.getProgramParameter(resources.shaderProgram, gl.LINK_STATUS)) {
+                    alert("Could not initialise shaders");
+                }
+
+                gl.useProgram(resources.shaderProgram);
+
+                resources.shaderProgram.vertexPositionAttribute = gl.getAttribLocation(resources.shaderProgram, "aVertexPosition");
+                resources.shaderProgram.textureCoordAttribute =    gl.getAttribLocation(resources.shaderProgram, "aTextureCoord");
+                gl.enableVertexAttribArray(resources.shaderProgram.vertexPositionAttribute);
+                gl.enableVertexAttribArray(resources.shaderProgram.textureCoordAttribute);
+
+                resources.shaderProgram.pMatrixUniform = gl.getUniformLocation(resources.shaderProgram, "uPMatrix");
+                resources.shaderProgram.mvMatrixUniform = gl.getUniformLocation(resources.shaderProgram, "uMVMatrix");
+                resources.shaderProgram.samplerUniform = gl.getUniformLocation(resources.shaderProgram, "texture");
+                
+            }
+
+            
+            function loadSceneOnGPU()
+            {
+                // triangle
+                resources.triangleVertexPositionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, resources.triangleVertexPositionBuffer);
+                var vertices = [
+                     0.0, 1.0, 0.0,
+                    -1.0, -1.0, 0.0,
+                     1.0, -1.0, 0.0
+                ];
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+                resources.triangleVertexPositionBuffer.itemSize = 3;
+                resources.triangleVertexPositionBuffer.numItems = 3;
+                
+                resources.triangleTexCoordBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, resources.triangleTexCoordBuffer);
+                // uvs
+                var uv = [
+                    0.0, 0.75,
+                    0.5, 0.5,
+                    0.5, 1.0
+                ]
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uv), gl.STATIC_DRAW);
+                resources.triangleTexCoordBuffer.itemSize = 2;
+                resources.triangleTexCoordBuffer.numItems = 3;
+
+                // quad
+                resources.screenQuadVBO = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, resources.screenQuadVBO);
+               var vertices = [
+                    1.0,  1.0,  0.0,
+                    -1.0,  1.0,  0.0,
+                    1.0, -1.0,  0.0,
+                    -1.0, -1.0,  0.0
+                ];
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+                resources.screenQuadVBO.itemSize = 3;
+                resources.screenQuadVBO.numItems = 4;
+                
+                // UV's
+                resources.screenQuadTexCoordBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, resources.screenQuadTexCoordBuffer);
+                uv = [
+                    1.0,  0.5,
+                    0.5,  0.5,
+                    1.0,  0.0,
+                    0.5,  0.0,
+                ]
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uv), gl.STATIC_DRAW);
+                resources.screenQuadTexCoordBuffer.itemSize = 2;
+                resources.screenQuadTexCoordBuffer.numItems = 4;
+            }
+
+            function setTextureParams(texture) {
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.bindTexture(gl.TEXTURE_2D, null);
+            }
+
+            function loadTextureOnGPU() {
+                resources.texture = gl.createTexture();
+                resources.texture.image = new Image();
+                resources.texture.image.onload = function () {
+                    setTextureParams(resources.texture)
+                }
+                resources.texture.image.src = "textures/marvel.png";
+            }
+
+            function initScene()
+            {
+                // triangle
+                var entity = {};
+                entity.transform = {};
+                entity.transform.position = [-1.2, 0.0, 0.0];
+                entity.transform.rotation = [0.0,0.0,0.0];
+                entity.transform.scale = [1.0,1.0,1.0];
+                entity.mesh = {};
+                entity.mesh.positionBuffer = resources.triangleVertexPositionBuffer;
+                entity.mesh.texCoordBuffer = resources.triangleTexCoordBuffer;
+                entities.push(entity);
+                
+                // quad
+                var entity = {};
+                entity.transform = {};
+                entity.transform.position = [1.2, 0.0, 0.0];
+                entity.transform.rotation = [0.0,0.0,0.0];
+                entity.transform.scale = [1.0,1.0,1.0];
+                entity.mesh = {};
+                entity.mesh.positionBuffer = resources.screenQuadVBO;
+                entity.mesh.texCoordBuffer = resources.screenQuadTexCoordBuffer;
+                entities.push(entity);
+            }
+
+            function drawScene()
+            {
+                gl.enable(gl.DEPTH_TEST);
+
+                gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+
+                gl.clearColor(0.0, 0.0, 0.0, 1.0);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                // projection matrix
+                var pMatrix = mat4.create();
+                mat4.identity(pMatrix);
+                mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 100.0, pMatrix);
+                gl.uniformMatrix4fv(resources.shaderProgram.pMatrixUniform, false, pMatrix);
+
+                 // view matrix
+                 var viewMatrix = mat4.create();
+                mat4.identity(viewMatrix);
+                var camPosCopy = vec3.create(camera.position);
+                mat4.translate(viewMatrix, vec3.negate(camPosCopy));
+                mat4.rotate(viewMatrix, camera.pitch, [1.0, 0.0, 0.0]);
+                mat4.rotate(viewMatrix, camera.yaw, [0.0, 1.0, 0.0]);
+
+                for (var i = 0; i < entities.length; ++i)
+                {
+                    var entity = entities[i];
+
+                    // vertex
+                    gl.bindBuffer(gl.ARRAY_BUFFER, entity.mesh.positionBuffer);
+                    gl.vertexAttribPointer(resources.shaderProgram.vertexPositionAttribute,
+                                            entity.mesh.positionBuffer.itemSize,
+                                            gl.FLOAT,
+                                            false,
+                                            0,0);
+                    // uv's
+                    gl.bindBuffer(gl.ARRAY_BUFFER, entity.mesh.texCoordBuffer);
+                    gl.vertexAttribPointer(resources.shaderProgram.textureCoordAttribute,
+                                            entity.mesh.texCoordBuffer.itemSize,
+                                            gl.FLOAT,
+                                            false,
+                                            0,0);
+
+                    // model matrix
+                    var modelMatrix = mat4.create();
+                    mat4.identity(modelMatrix);
+                    mat4.translate(modelMatrix, entity.transform.position);
+                    mat4.rotate(modelMatrix, entity.transform.rotation[1], [0.0, 1.0, 0.0]);
+                    mat4.rotate(modelMatrix, entity.transform.rotation[0], [1.0, 0.0, 0.0]);
+                    mat4.rotate(modelMatrix, entity.transform.rotation[2], [0.0, 0.0, 1.0]);
+                    mat4.scale(modelMatrix, entity.transform.scale);
+                    
+                    // modelview matrix
+                    var mvMatrix = mat4.multiply(viewMatrix, modelMatrix, mat4.create());
+                    gl.uniformMatrix4fv(resources.shaderProgram.mvMatrixUniform, false, mvMatrix);
+
+                    // texture
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, resources.texture);
+                    gl.uniform1i(resources.shaderProgram.samplerUniform, 0);
+
+                    gl.drawArrays(gl.TRIANGLE_STRIP, 0, entity.mesh.positionBuffer.numItems);
+                    
+                }
+                 // quad
+                 // mesh
+               /*  gl.bindBuffer(gl.ARRAY_BUFFER, resources.screenQuadVBO);
+                gl.vertexAttribPointer(resources.shaderProgram.vertexPositionAttribute, resources.screenQuadVBO.itemSize, gl.FLOAT, false, 0, 0);
+                // UV's
+                gl.bindBuffer(gl.ARRAY_BUFFER, screenQuadTexCoordBuffer);
+                gl.vertexAttribPointer(resources.shaderProgram.textureCoordAttribute, 2, gl.FLOAT, false, 0,0);
+               
+                // model matrix
+                var modelMatrix = mat4.create();
+                mat4.identity(modelMatrix);
+                mat4.translate(modelMatrix, [0.0, 0.0, -5.0]);
+                mat4.multiply(modelMatrix, mouseRotationMatrix);
+                mat4.translate(modelMatrix, [1.2, 0.0, 0.0]);
+
+                // modelview matrix
+                var mvMatrix = mat4.multiply(viewMatrix, modelMatrix, mat4.create());
+                gl.uniformMatrix4fv(resources.shaderProgram.mvMatrixUniform, false, mvMatrix);
+
+                // texture
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, myTexture);
+                gl.uniform1i(resources.shaderProgram.samplerUniform, 0);
+
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, resources.screenQuadVBO.numItems); */
+
+                // triangle
+                // gl.bindBuffer(gl.ARRAY_BUFFER, triangleVertexPositionBuffer);
+                // gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, triangleVertexPositionBuffer.itemSize, gl.FLOAT, false, 0,0);
+                // gl.bindBuffer(gl.ARRAY_BUFFER, triangleTexCoordBuffer);
+                // gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, 2, gl.FLOAT, false, 0, 0);
+
+                // mat4.identity(mvMatrix);
+                // mat4.translate(mvMatrix, [0.0, 0.0, -5.0]);
+                // mat4.multiply(mvMatrix, mouseRotationMatrix);
+                // mat4.translate(mvMatrix, [-1.2, 0.0, 0.0]);
+
+                // gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, mvMatrix);
+                // gl.uniform1i(shaderProgram.samplerUniform, 0);
+                // gl.drawArrays(gl.TRIANGLE_STRIP, 0, triangleVertexPositionBuffer.numItems);
+
+            }
+
+            function renderingLoop() {
+                requestAnimationFrame(renderingLoop);
+                handleKeys();
+                drawScene();
+            }
+
+            //* ----------------------- INPUT ----------------------- * //
+            // keyboard -----
+            function handleKeys()
+            {
+                if(currentlyPressedKeys[82]) // handle key "R"
+                {
+                    // TODO: reset camera
+                }
+            }
+
+            function handleKeyDown() {
+                currentlyPressedKeys[event.keyCode] = true;
+            }
+            function handleKeyUp() {
+                currentlyPressedKeys[event.keyCode] = false;
+            }
+            // --------------
+            // mouse
+            function handleMouseDown() {
+                mouseDown = true;
+                currentMouseButtonState[event.button] = true;
+
+                if(event.button == 0) // Left mouse button
+                {
+                    lastMouseX = event.clientX;
+                    lastMouseY = event.clientY;
+                }
+            }
+            
+            function handleMouseMove() {
+                if(!mouseDown) {
+                     return;
+                }
+
+                if(currentMouseButtonState[0]) // Left mouse button
+                {
+                    var newX = event.clientX;
+                    var newY = event.clientY;
+                    var deltaX = newX - lastMouseX;
+                    var deltaY = newY - lastMouseY;
+
+                   /*  var newRotationMatrix = mat4.create();
+                    mat4.identity(newRotationMatrix);
+                    mat4.rotate(newRotationMatrix, deg2Rad(deltaX / 10), [0, 1, 0]);
+                    mat4.rotate(newRotationMatrix, deg2Rad(deltaY / 10), [1, 0, 0]);
+                    mat4.multiply(newRotationMatrix, mouseRotationMatrix, mouseRotationMatrix); */
+                    
+                    camera.pitch += deg2Rad(deltaY / 5);
+                    camera.yaw += deg2Rad(deltaX / 5);
+
+                    lastMouseX = newX;
+                    lastMouseY = newY;
+                }
+            }
+
+            function handleMouseUp() {
+                mouseDown = false;
+                currentMouseButtonState[event.button] = false;
+
+                if(event.button == 0) // Left mouse button
+                {
+                }
+            }
+
+            function webGLStart()
+            {
+                var canvas = document.getElementById("webGL-canvas");
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+
+                // keys
+                document.onkeydown = handleKeyDown;
+                document.onkeyup = handleKeyUp;
+                // mouse
+                canvas.onmousedown = handleMouseDown;
+                document.onmouseup = handleMouseUp;
+                document.onmousemove = handleMouseMove;
+
+                initGL(canvas);
+                initShaders();
+                loadSceneOnGPU();
+
+                loadTextureOnGPU();
+
+                gl.clearColor(0.0, 0.0, 0.0, 1.0);
+                gl.enable(gl.DEPTH_TEST);
+
+                initScene();
+                renderingLoop();
+            }
+
+            // Tools
+            function deg2Rad(degrees)
+            {
+                var pi = Math.PI;
+                return degrees * (pi / 180);
+            }
+
+        </script>
+
+    </head>
+
+    <body onload="webGLStart();" onresize="webGLStart();">
+        <canvas id="webGL-canvas" style="border: none; width:100%; height:100%; margin: 0 auto;"></canvas>    
+    </body>
+
+</html>
