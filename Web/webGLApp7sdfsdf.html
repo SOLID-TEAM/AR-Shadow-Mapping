@@ -86,6 +86,8 @@
 
             // light depth map
             uniform sampler2D lightDepth;
+            // albedo color
+            uniform vec4 color;
 
             varying vec3 vLightDir;
             varying vec3 vNormal;
@@ -114,7 +116,7 @@
                 vec3 totalColor = vec3(0.0);
 
                 // hardcoded mat properties test
-                vec3 albedo = vec3(1.0, 0.6, 0.0);
+                vec3 albedo = vec3(color.xyz);
                 float shininess = 40.0;
                 // hardcoded light properties
                 vec3 lightColor = vec3(1.0);
@@ -169,8 +171,8 @@
             var entities = [];
             var camera = new cam();
             var directionalLight = {
-                position : [0.0, 0.0, 10.0],
-                rotation : [Math.PI * 0.3,  0.3, 0.0]                  
+                position : [1.0, 0.0, 10.0],
+                rotation : [Math.PI * 0.3,  0.1, 0.0]                  
             };
            
             var input = {
@@ -313,6 +315,8 @@
                 resources.shaderProgram.lightDepth = gl.getUniformLocation(resources.shaderProgram, "lightDepth");
                 resources.shaderProgram.lightDirection = gl.getUniformLocation(resources.shaderProgram, "uLightDir");
 
+                resources.shaderProgram.colorUniform = gl.getUniformLocation(resources.shaderProgram, "color");
+
                 //gl.disableVertexAttribArray(resources.shaderProgram.vertexPositionAttribute); // ?
                 //gl.disableVertexAttribArray(resources.shaderProgram.vertexNormalAttribute); // ?
  
@@ -350,6 +354,7 @@
                 entity.transform.rotation = [0.0,0.0,0.0];
                 entity.transform.scale = [0.1, 0.1, 0.1];
                 entity.model = resources.modelTeapot;
+                entity.color = [1.0, 0.6, 0.0, 1.0];
                 entities.push(entity);
                 
                 // laptop
@@ -359,6 +364,7 @@
                 entity.transform.rotation = [-Math.PI * 0.5 ,0.0 ,0.0];
                 entity.transform.scale = [1.5,1.5,1.5];
                 entity.model = resources.modelLaptop;
+                entity.color = [0.1, 0.3, 1.0, 1.0];
                 entities.push(entity);
 
                 // plane
@@ -368,6 +374,7 @@
                 entity.transform.rotation = [0.0, 0.0, 0.0];
                 entity.transform.scale = [12.0, 1.0, 8.0];
                 entity.model = resources.modelPlane;
+                entity.color = [0.4, 0.4, 0.4, 1.0];
                 entities.push(entity);
 
             }
@@ -477,6 +484,8 @@
                     mat3.transpose(normalMatrix);
                     gl.uniformMatrix3fv(resources.shaderProgram.normalMatrixUniform, false, normalMatrix);
 
+                    // send color uniform
+                    gl.uniform4fv(resources.shaderProgram.colorUniform ,entity.color);
 
                     gl.drawElements(gl.TRIANGLES, entity.model.indexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
                     
