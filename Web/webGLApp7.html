@@ -138,7 +138,7 @@
                     texture2D(lightDepth, positionTextureLightspace.xy));
 
                 float lightFactor = 0.0;
-                if(depthFromLightTexture + 0.000 > positionTextureLightspace.z) {
+                if(depthFromLightTexture + 0.001 > positionTextureLightspace.z) {
                     lightFactor = 1.0;
                 }
 
@@ -219,8 +219,8 @@
             {
                 resources.rttFrameBuffer = gl.createFramebuffer();
                 gl.bindFramebuffer(gl.FRAMEBUFFER, resources.rttFrameBuffer);
-                resources.rttFrameBuffer.width = 1024;
-                resources.rttFrameBuffer.height = 1024;
+                resources.rttFrameBuffer.width = 2048;
+                resources.rttFrameBuffer.height = 2048;
 
                 resources.rttTexture = gl.createTexture();
                 gl.bindTexture(gl.TEXTURE_2D, resources.rttTexture);
@@ -374,8 +374,8 @@
             function drawSceneFromCamera()
             {
                 gl.enable(gl.DEPTH_TEST);
-                gl.enable(gl.CULL_FACE);
-                gl.cullFace(gl.BACK); // default value btw
+                //gl.enable(gl.CULL_FACE);
+                //gl.cullFace(gl.BACK); // default value btw
 
                 gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
 
