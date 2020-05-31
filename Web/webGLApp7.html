@@ -8,6 +8,45 @@
         <script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
         <script type="text/javascript" src="webgl-utils.js"></script>
 
+        <script id="light-vs" type="x-shader/x-vertex">
+            attribute vec3 aVertexPosition;
+
+            uniform mat4 mvMatrixLight;
+            uniform mat4 projectionMatrixLight;
+
+            void main(void) {
+                gl_Position = projectionMatrixLight * mvMatrixLight * vec4(aVertexPosition, 1.0);
+            }
+        </script>
+
+        <script id="light-fs" type="x-shader/x-fragment">
+            precision mediump float;
+
+            vec4 encodeFloat (float depth)
+            {
+                const vec4 bitShift = vec4(
+                    256 * 256 * 256,
+                    256 * 256,
+                    256,
+                    1.0
+                );
+                const vec4 bitMask = vec4(
+                    0,
+                    1.0 / 256.0,
+                    1.0 / 256.0,
+                    1.0 / 256.0
+                );
+                vec4 comp = fract(depth * bitShift);
+                comp -= comp.xxyz * bitMask;
+                return comp;
+            }
+
+            void main(void)
+            {
+                gl_FragColor = encodeFloat(gl_FragCoord.z);
+            }
+        </script>
+
         <script id="shader-vs" type="x-shader/x-vertex">
             attribute vec3 aVertexPosition;
             attribute vec3 aVertexNormal;
@@ -17,9 +56,15 @@
             uniform mat4 uPMatrix;
             uniform mat3 uNormalMatrix;
 
+            // light matrices
+            uniform mat4 mvMatrixLight;
+            uniform mat4 projectionMatrixLight;
+
             varying vec3 vLightDir;
             varying vec3 vNormal;
             varying vec3 vPosition;
+
+            varying vec4 positionProjectedLightSpace;
 
             void main(void) {
 
@@ -29,6 +74,8 @@
 
                 vPosition = vec3(uMVMatrix * vec4(aVertexPosition, 1.0));
 
+                positionProjectedLightSpace = projectionMatrixLight * mvMatrixLight * vec4(aVertexPosition, 1.0);
+
                 gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
             }
         </script>
@@ -36,9 +83,25 @@
         <script id="shader-fs" type="x-shader/x-fragment">
             precision mediump float;
 
+            // light depth map
+            uniform sampler2D lightDepth;
+
             varying vec3 vLightDir;
             varying vec3 vNormal;
             varying vec3 vPosition;
+
+            varying vec4 positionProjectedLightSpace;
+
+            float decodeFloat(vec4 color)
+            {
+                const vec4 bitShift = vec4(
+                    1.0 / (256.0 * 256.0 * 256.0),
+                    1.0 / (256.0 * 256.0),
+                    1.0 / 256.0,
+                    1
+                );
+                return dot(color, bitShift);
+            }
 
             void main(void) {
                 vec3 N = normalize(vNormal);
@@ -57,19 +120,31 @@
                 
                 // ambient
                 float ambientIntensity = 0.5;
-                totalColor += albedo * ambientIntensity;
+                vec3 ambient = albedo * ambientIntensity;
 
                 // diffuse
                 float diffuseIntensity = max(0.0, dot(N, L));
-                totalColor += albedo * lightColor * diffuseIntensity;
+                vec3 diffuse = albedo * lightColor * diffuseIntensity;
 
                 // specular
                 float specularIntensity = pow(max(0.0, dot(R, V)), shininess);
-                totalColor += lightColor * specularIntensity;
+                vec3 specular = lightColor * specularIntensity;
 
-                gl_FragColor = vec4(N, 1.0);
+                // pixel exposure
+                vec3 positionTextureLightspace = 0.5 * positionProjectedLightSpace.xyz /
+                                                        positionProjectedLightSpace.w + vec3(0.5);
+                
+                float depthFromLightTexture = decodeFloat(
+                    texture2D(lightDepth, positionTextureLightspace.xy));
 
-                gl_FragColor = vec4(totalColor, 1.0);
+                float lightFactor = 0.0;
+                if(depthFromLightTexture + 0.001 > positionTextureLightspace.z) {
+                    lightFactor = 1.0;
+                }
+
+                vec3 shadedColor = ambient + (diffuse + specular) * lightFactor;
+
+                gl_FragColor = vec4(shadedColor, 1.0);
             }
         </script>
         
@@ -92,6 +167,10 @@
             var resources = {};
             var entities = [];
             var camera = new cam();
+            var directionalLight = {
+                position : [0.0, 0.0, 0.0],
+                rotation : [0.0, Math.PI * 0.5, 0.0]                
+            };
            
             var input = {
                 keys : [],
@@ -139,8 +218,8 @@
             {
                 resources.rttFrameBuffer = gl.createFramebuffer();
                 gl.bindFramebuffer(gl.FRAMEBUFFER, resources.rttFrameBuffer);
-                resources.rttFrameBuffer.width = 2048;
-                resources.rttFrameBuffer.height = 2048;
+                resources.rttFrameBuffer.width = 1024;
+                resources.rttFrameBuffer.height = 1024;
 
                 resources.rttTexture = gl.createTexture();
                 gl.bindTexture(gl.TEXTURE_2D, resources.rttTexture);
@@ -202,6 +281,7 @@
 
             function initShaders()
             {
+                // camera shader
                 var fragmentShader = getShader("shader-fs");
                 var vertexShader = getShader("shader-vs");
 
@@ -214,7 +294,7 @@
                     alert("Could not initialise shaders");
                 }
 
-                gl.useProgram(resources.shaderProgram);
+                gl.useProgram(resources.shaderProgram); // this is needed here?
 
                 resources.shaderProgram.vertexPositionAttribute = gl.getAttribLocation(resources.shaderProgram, "aVertexPosition");
                 gl.enableVertexAttribArray(resources.shaderProgram.vertexPositionAttribute);
@@ -226,6 +306,27 @@
                 resources.shaderProgram.mvMatrixUniform = gl.getUniformLocation(resources.shaderProgram, "uMVMatrix");
                 resources.shaderProgram.vMatrixUniform =  gl.getUniformLocation(resources.shaderProgram, "uVMatrix");
                 resources.shaderProgram.normalMatrixUniform = gl.getUniformLocation(resources.shaderProgram, "uNormalMatrix")
+
+                // from light shader
+                var fragmentShader = getShader("light-fs");
+                var vertexShader = getShader("light-vs");
+
+                resources.programLight = gl.createProgram();
+                gl.attachShader(resources.programLight, vertexShader);
+                gl.attachShader(resources.programLight, fragmentShader);
+                gl.linkProgram(resources.programLight);
+
+                if(!gl.getProgramParameter(resources.programLight, gl.LINK_STATUS)) {
+                    alert("could not initialise light shader");
+                }
+
+                gl.useProgram(resources.programLight); // this is needed here?
+
+                resources.programLight.vertexPositionAttribute = gl.getAttribLocation(resources.programLight, "aVertexPosition");
+                gl.enableVertexAttribArray(resources.programLight.vertexPositionAttribute);
+
+                resources.programLight.pMatrixUniform = gl.getUniformLocation(resources.programLight, "projectionMatrixLight");
+                resources.programLight.mvMatrixUniform = gl.getUniformLocation(resources.programLight, "mvMatrixLight");
     
             }
 
@@ -257,9 +358,11 @@
                 entity.transform.scale = [12.0, 1.0, 8.0];
                 entity.model = resources.modelPlane;
                 entities.push(entity);
+
+                // light
             }
 
-            function drawScene()
+            function drawSceneFromCamera()
             {
                 gl.enable(gl.DEPTH_TEST);
                 gl.enable(gl.CULL_FACE);
@@ -269,6 +372,8 @@
 
                 gl.clearColor(0.0, 0.0, 0.0, 1.0);
                 gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                gl.useProgram(resources.shaderProgram);
 
                 // projection matrix
                 var pMatrix = mat4.create();
@@ -336,6 +441,67 @@
 
             }
 
+            function drawSceneFromLight()
+            {
+                //gl.bindFramebuffer(gl.FRAMEBUFFER, resources.rttFrameBuffer);
+
+                gl.viewport(0, 0, resources.rttFrameBuffer.width, resources.rttFrameBuffer.height);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                gl.useProgram(resources.programLight);
+
+                //gl.enableVertexAttribArray(resources.programLight.vertexPositionAttribute);
+
+                // projection matrix
+                var pMatrix = mat4.create();
+                mat4.identity(pMatrix);
+                mat4.ortho(-5, 5, -5, 5, 0, 30, pMatrix);
+                gl.uniformMatrix4fv(resources.programLight.pMatrixUniform, false, pMatrix);
+
+                // view matrix
+                var viewMatrix = mat4.create();
+                mat4.identity(viewMatrix);
+                var lightPosCopy = vec3.create(directionalLight.position);
+                mat4.translate(viewMatrix, vec3.negate(lightPosCopy));
+                mat4.rotate(viewMatrix, directionalLight.rotation[1], [0.0, 1.0, 0.0]);
+                mat4.rotate(viewMatrix, directionalLight.rotation[0], [1.0, 0.0, 0.0]);
+                mat4.rotate(viewMatrix, directionalLight.rotation[2], [0.0, 0.0, 1.0]);
+               
+                // invert to get view matrix from light
+                var modelMatrix = mat4.create();
+                mat4.identity(modelMatrix);
+                mat4.inverse(viewMatrix, modelMatrix);
+
+                var mvMatrix = mat4.multiply(viewMatrix, modelMatrix, mat4.create());
+                gl.uniformMatrix4fv(resources.programLight.mvMatrixUniform, false, mvMatrix);
+
+                for (var i = 0; i < entities.length; ++i)
+                {
+                    var entity = entities[i];
+                    
+                    // async load model check
+                    if(entity.model.indexBuffer == null) continue;
+
+                    // vertex
+                    gl.bindBuffer(gl.ARRAY_BUFFER, entity.model.positionBuffer);
+                    gl.vertexAttribPointer(resources.programLight.vertexPositionAttribute,
+                                            entity.model.positionBuffer.itemSize,
+                                            gl.FLOAT,
+                                            false,
+                                            0,0);
+
+                    // bind indices
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, entity.model.indexBuffer);
+                    
+                    gl.drawElements(gl.TRIANGLES, entity.model.indexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+                    
+                }
+
+                //gl.disableVertexAttribArray(resources.programLight.vertexPositionAttribute);
+
+                //gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            }
+
             function Update() 
             {
                 var d = new Date();
@@ -345,7 +511,9 @@
 
                 requestAnimationFrame(Update);
                 processInputEvents();
-                drawScene();
+
+                drawSceneFromLight();
+                //drawSceneFromCamera();
             }
 
             //* ----------------------- INPUT ----------------------- * //
@@ -563,6 +731,7 @@
                 initTime();
                 initInput();
                 initShaders();
+                initTextureFramebuffer();
 
                 initModels();
                 initScene();
