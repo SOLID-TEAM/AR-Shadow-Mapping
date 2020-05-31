@@ -43,7 +43,7 @@
 
             void main(void)
             {
-                gl_FragColor = vec4(gl_FragCoord.z, gl_FragCoord.z, gl_FragCoord.z, 1.0);//encodeFloat(gl_FragCoord.z);
+                gl_FragColor = encodeFloat(gl_FragCoord.z);
             }
         </script>
 
@@ -57,8 +57,8 @@
             uniform mat3 uNormalMatrix;
 
             // light matrices
-            uniform mat4 mvMatrixLight;
-            uniform mat4 projectionMatrixLight;
+            uniform mat4 uMVMatrixLight;
+            uniform mat4 uPMatrixLight;
 
             varying vec3 vLightDir;
             varying vec3 vNormal;
@@ -74,7 +74,7 @@
 
                 vPosition = vec3(uMVMatrix * vec4(aVertexPosition, 1.0));
 
-                positionProjectedLightSpace = projectionMatrixLight * mvMatrixLight * vec4(aVertexPosition, 1.0);
+                positionProjectedLightSpace = uPMatrixLight * uMVMatrixLight * vec4(aVertexPosition, 1.0);
 
                 gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
             }
@@ -138,7 +138,7 @@
                     texture2D(lightDepth, positionTextureLightspace.xy));
 
                 float lightFactor = 0.0;
-                if(depthFromLightTexture + 0.001 > positionTextureLightspace.z) {
+                if(depthFromLightTexture + 0.000 > positionTextureLightspace.z) {
                     lightFactor = 1.0;
                 }
 
@@ -170,7 +170,7 @@
             var directionalLight = {
                 position : [-2.0, 0.0, 10.0],
                 //rotation : [-Math.PI * 0.5, 0.0, 0.0]
-                rotation : [0.5, 0.0, 0.0]                  
+                rotation : [1.0, 0.0, 0.0]                  
             };
            
             var input = {
@@ -306,7 +306,11 @@
                 resources.shaderProgram.pMatrixUniform =  gl.getUniformLocation(resources.shaderProgram, "uPMatrix");
                 resources.shaderProgram.mvMatrixUniform = gl.getUniformLocation(resources.shaderProgram, "uMVMatrix");
                 resources.shaderProgram.vMatrixUniform =  gl.getUniformLocation(resources.shaderProgram, "uVMatrix");
-                resources.shaderProgram.normalMatrixUniform = gl.getUniformLocation(resources.shaderProgram, "uNormalMatrix")
+                resources.shaderProgram.normalMatrixUniform = gl.getUniformLocation(resources.shaderProgram, "uNormalMatrix");
+
+                resources.shaderProgram.mvMatrixLightUniform = gl.getUniformLocation(resources.shaderProgram, "uMVMatrixLight");
+                resources.shaderProgram.pMatrixLightUniform = gl.getUniformLocation(resources.shaderProgram, "uPMatrixLight");
+                resources.shaderProgram.lightDepth = gl.getUniformLocation(resources.shaderProgram, "lightDepth");
 
                 //gl.disableVertexAttribArray(resources.shaderProgram.vertexPositionAttribute); // ?
                 //gl.disableVertexAttribArray(resources.shaderProgram.vertexNormalAttribute); // ?
@@ -397,6 +401,31 @@
                 mat4.rotate(viewMatrix, camera.yaw, [0.0, 1.0, 0.0]);
                 gl.uniformMatrix4fv(resources.shaderProgram.vMatrixUniform, false, viewMatrix);
 
+                // light projection and model view --------------------
+                 // projection matrix
+                var pLightMatrix = mat4.create();
+                mat4.identity(pLightMatrix);
+                mat4.ortho(-5, 5, -5, 5, 0, 30, pLightMatrix);
+                //mat4.lookat()
+                gl.uniformMatrix4fv(resources.shaderProgram.pMatrixLightUniform, false, pLightMatrix);
+
+                // light view matrix
+                var lightViewMatrix = mat4.create();
+                mat4.identity(lightViewMatrix);
+                var lightPosCopy = vec3.create(directionalLight.position);
+                mat4.translate(lightViewMatrix, vec3.negate(lightPosCopy));
+                mat4.rotate(lightViewMatrix, directionalLight.rotation[1], [0.0, 1.0, 0.0]);
+                mat4.rotate(lightViewMatrix, directionalLight.rotation[0], [1.0, 0.0, 0.0]);
+                mat4.rotate(lightViewMatrix, directionalLight.rotation[2], [0.0, 0.0, 1.0]);
+                //mat4.inverse(lightViewMatrix, lightViewMatrix);
+                // ------------------------------------------------------
+
+                // pass depth texture to uniform
+                // texture
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, resources.rttTexture);
+                gl.uniform1i(resources.shaderProgram.lightDepth, 0);
+
                 for (var i = 0; i < entities.length; ++i)
                 {
                     var entity = entities[i];
@@ -432,15 +461,19 @@
                     mat4.rotate(modelMatrix, entity.transform.rotation[2], [0.0, 0.0, 1.0]);
                     mat4.scale(modelMatrix, entity.transform.scale);
                     
-                    // modelview matrix
+                    // modelview matrix from cam
                     var mvMatrix = mat4.multiply(viewMatrix, modelMatrix, mat4.create());
                     gl.uniformMatrix4fv(resources.shaderProgram.mvMatrixUniform, false, mvMatrix);
+                    // modelview matrix from light
+                    var mvLightMatrix = mat4.multiply(lightViewMatrix, modelMatrix, mat4.create());
+                    gl.uniformMatrix4fv(resources.shaderProgram.mvMatrixLightUniform, false, mvLightMatrix);
 
                     // normal matrix (not need on this exercise)
                     var normalMatrix = mat3.create();
                     mat4.toInverseMat3(mvMatrix, normalMatrix); // ?
                     mat3.transpose(normalMatrix);
                     gl.uniformMatrix3fv(resources.shaderProgram.normalMatrixUniform, false, normalMatrix);
+
 
                     gl.drawElements(gl.TRIANGLES, entity.model.indexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
                     
@@ -454,9 +487,7 @@
             function drawSceneFromLight()
             {
                 gl.enable(gl.DEPTH_TEST);
-                gl.enable(gl.CULL_FACE);
-                gl.cullFace(gl.BACK); // default value btw
-                //gl.bindFramebuffer(gl.FRAMEBUFFER, resources.rttFrameBuffer);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, resources.rttFrameBuffer);
 
                 gl.viewport(0, 0, resources.rttFrameBuffer.width, resources.rttFrameBuffer.height);
                 //gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
@@ -528,7 +559,7 @@
 
                 gl.disableVertexAttribArray(resources.programLight.vertexPositionAttribute);
 
-                //gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             }
 
             function Update() 
@@ -542,7 +573,7 @@
                 processInputEvents();
 
                 drawSceneFromLight();
-                //drawSceneFromCamera();
+                drawSceneFromCamera();
             }
 
             //* ----------------------- INPUT ----------------------- * //
