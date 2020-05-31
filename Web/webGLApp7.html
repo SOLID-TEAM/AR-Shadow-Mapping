@@ -135,6 +135,33 @@
                 }
             }
 
+            function initTextureFramebuffer()
+            {
+                resources.rttFrameBuffer = gl.createFramebuffer();
+                gl.bindFramebuffer(gl.FRAMEBUFFER, resources.rttFrameBuffer);
+                resources.rttFrameBuffer.width = 2048;
+                resources.rttFrameBuffer.height = 2048;
+
+                resources.rttTexture = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, resources.rttTexture);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, resources.rttTexture.width, resources.rttTexture.height,
+                                0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                
+                var renderBuffer = gl.createRenderbuffer();
+                gl.bindRenderbuffer(gl.RENDERBUFFER, renderBuffer);
+                gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16,
+                                        resources.rttFrameBuffer.width, resources.rttFrameBuffer.height);
+
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, resources.rttTexture, 0);
+                gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderBuffer);
+
+                gl.bindTexture(gl.TEXTURE_2D, null);
+                gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            }
+
 
             function getShader(id)
             {
@@ -220,6 +247,15 @@
                 entity.transform.rotation = [-Math.PI * 0.5 ,0.0 ,0.0];
                 entity.transform.scale = [1.5,1.5,1.5];
                 entity.model = resources.modelLaptop;
+                entities.push(entity);
+
+                // plane
+                var entity = {};
+                entity.transform = {};
+                entity.transform.position = [0.0, -1.5, 0.0];
+                entity.transform.rotation = [0.0, 0.0, 0.0];
+                entity.transform.scale = [12.0, 1.0, 8.0];
+                entity.model = resources.modelPlane;
                 entities.push(entity);
             }
 
@@ -452,10 +488,50 @@
                 return model;
             }
 
+            function loadPlaneToGPU()
+            {
+                var model = {};
+                // vertices
+                model.positionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, model.positionBuffer);
+                var vertices = [
+                    -0.5, 0.0, 0.5,
+                    -0.5, 0.0, -0.5,
+                     0.5, 0.0, -0.5,
+                     0.5, 0.0, 0.5,
+
+                ];
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+                model.positionBuffer.itemSize = 3;
+
+                // normals
+                model.normalBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, model.normalBuffer);
+                var normals = [
+                    0.0, 1.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 1.0, 0.0 
+                ]
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+                model.normalBuffer.itemSize = 3;
+                
+                // indices
+                model.indexBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, model.indexBuffer);
+                var indices = [0,3,2,2,1,0];
+                gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+                model.indexBuffer.itemSize = 1;
+                model.indexBuffer.numItems = indices.length;
+
+                return model;
+            }
+
             function initModels()
             {
                 resources.modelTeapot = requestModel("Models/Teapot.json");
                 resources.modelLaptop = requestModel("Models/Laptop.json");
+                resources.modelPlane = loadPlaneToGPU();
             }
 
             function initInput()
