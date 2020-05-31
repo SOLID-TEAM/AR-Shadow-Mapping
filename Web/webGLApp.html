@@ -13,17 +13,23 @@
             attribute vec3 aVertexPosition;
             attribute vec3 aVertexNormal;
 
-            varying vec3 vLightDir;
+            varying vec3 vPosition;
             varying vec3 vNormal;
+            varying vec3 vLightDir;
+            varying vec3 vAlbedoColor;
 
             uniform mat4 uMVMatrix;
             uniform mat4 uPMatrix;
             uniform mat4 uVMatrix;
+            uniform mat3 uNormalMatrix;
+            uniform vec3 uAlbedoColor;
 
             void main(void) {
                 gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+                vPosition = vec3(uMVMatrix * vec4(aVertexPosition, 1.0));
                 vLightDir = mat3(uVMatrix) * vec3(-0.75, 1.0, 0.0);
-                vNormal = mat3(uMVMatrix) * aVertexNormal;
+                vNormal = uNormalMatrix * aVertexNormal;
+                vAlbedoColor = uAlbedoColor;
             }
         </script>
 
@@ -32,33 +38,39 @@
 
             varying vec3 vLightDir;
             varying vec3 vNormal;
+            varying vec3 vPosition;
+            varying vec3 vAlbedoColor;
 
             void main(void) {
 
-                vec3 nVec = normalize(vNormal);
-                vec3 lVec = normalize(vLightDir);
+                vec3 N = normalize(vNormal);
+                vec3 L = normalize(vLightDir);
+                vec3 P = vPosition;
+                vec3 V = normalize(-P);
+                vec3 R = reflect(-L, N);
 
                 vec3 totalColor = vec3(0.0);
 
-                // Hardcoded Material
-                vec3 albedo = vec3(1.0, 0.0, 0.7);
-    
-                // Hardcoded Light
+                // hardcoded mat properties test
+                vec3 albedo = vAlbedoColor;
+                float shininess = 40.0;
+                // hardcoded light properties
                 vec3 lightColor = vec3(1.0);
-    
-                // Ambient
-                totalColor += albedo * 0.5;
+                
+                // ambient
+                float ambientIntensity = 0.5;
+                totalColor += albedo * ambientIntensity;
 
-                // Diffuse
-                float diffuseIntensity = max(0.0, dot(nVec, lVec));
+                // diffuse
+                float diffuseIntensity = max(0.0, dot(N, L));
                 totalColor += albedo * lightColor * diffuseIntensity;
 
-                // Specular
-                float specularIntensity = pow( max( dot(nVec, lVec), 0.0), 32.0);
+                // specular
+                float specularIntensity = pow(max(0.0, dot(R, V)), shininess);
                 totalColor += lightColor * specularIntensity;
 
-                gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
-                gl_FragColor = vec4(nVec, 1.0);
+                gl_FragColor = vec4(N, 1.0);
+
                 gl_FragColor = vec4(totalColor, 1.0);
             }
         </script>
@@ -79,7 +91,8 @@
         var lastMousePosX = 0;
         var lastMousePosY = 0;
         var wheel = 0;
-
+        
+        var albedoColorAtribute;
         var myTexture;
         var colors;
 
@@ -159,10 +172,6 @@
 
             gl.useProgram(shaderProgram);
 
-            // shaderProgram.texCoordAttribute = gl.getAttribLocation(shaderProgram, 'aTextureCoord');
-            // gl.enableVertexAttribArray(shaderProgram.texCoordAttribute);
-            // gl.vertexAttribPointer(shaderProgram.texCoordAttribute, 2, gl.FLOAT, false, 0, 0);
-
             shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
             gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
 
@@ -172,6 +181,8 @@
             shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
             shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
             shaderProgram.vMatrixUniform = gl.getUniformLocation(shaderProgram, "uVMatrix");
+            shaderProgram.normalMatrixUniform = gl.getUniformLocation(shaderProgram, "uNormalMatrix");
+            shaderProgram.albedoColorUniform = gl.getUniformLocation(shaderProgram, "uAlbedoColor" )
         }
 
         function loadSceneOnGPU() {
@@ -190,13 +201,13 @@
 
             // Add objects -----------------------------
 
-            var object = addObject("Models/Teapot.json");
-            mat4.translate(object.trans, [-3.0, 0, 0.0]);
+            var object = addObject("Models/Teapot.json",  [255.0/255.0,127.0/255.0, 0]);
+            mat4.translate(object.trans, [-2.0, 0, 0.0]);
             mat4.scale(object.trans, [0.1, 0.1, 0.1]);
 
-            object = addObject("Models/Laptop.json");
-            mat4.translate(object.trans, [3.0, 0, 0.0]);
-            mat4.rotate(object.trans, degToRad(-90) ,[1.0, 0, 0.0]);
+            object = addObject("Models/Laptop.json", [0.2, 0.4, 0.9] );
+            mat4.translate(object.trans, [2.0, -0.7, 0]);
+            mat4.rotate(object.trans, degToRad(-90), [1.0, 0, 0.0]);
             mat4.scale(object.trans, [1.5, 1.5, 1.5]);
         }
 
@@ -390,10 +401,9 @@
             lastMousePosY = mousePosY;
         }
 
-        function addObject(modelPath) {
+        function addObject(modelPath, color) {
 
             // Params -----------------------------------------
-            var color = [1.0, 0.0, 0.0, 1.0];
             var trans = mat4.create();
             mat4.identity(trans);
 
@@ -404,7 +414,7 @@
                 'indexBuffer': -1,
                 'loaded': false,
                 'trans': trans,
-                'color': colors
+                'color': color
             }
 
             objects.push(object);
@@ -419,9 +429,16 @@
             gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
             var pMatrix = mat4.create();
             mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 300.0, pMatrix);
-            var vMatrix = mat4.create();
-            mat4.identity(vMatrix);
-            gl.uniformMatrix4fv(shaderProgram.vMatrixUniform, false, vMatrix);
+
+            var viewMatrix = mat4.create();
+            mat4.identity(viewMatrix);
+            var camPosCopy = vec3.create(camera.position);
+            mat4.translate(viewMatrix, vec3.negate(camPosCopy));
+            mat4.rotate(viewMatrix, degToRad(camera.pitch), [1.0, 0.0, 0.0]);
+            mat4.rotate(viewMatrix, degToRad(camera.yaw), [0.0, 1.0, 0.0]);
+            gl.uniformMatrix4fv(shaderProgram.vMatrixUniform, false, viewMatrix);
+
+
 
             gl.clearColor(0.0, 0.0, 0.0, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -440,13 +457,17 @@
                 // var buffer = objects[i].textureCoordBuffer;
                 // gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
                 // gl.vertexAttribPointer(shaderProgram.texCoordAttribute, buffer.itemSize, gl.FLOAT, false, 0, 0);
+                
+                // Albedo Color ---------
+               var color = objects[i].color;
+                gl.uniform3f( shaderProgram.albedoColorUniform , color[0], color[1], color[2]);
 
                 // Vertex -----------------
                 var buffer = objects[i].vertexPositionBuffer;
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
                 gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, buffer.itemSize, gl.FLOAT, false, 0, 0);
 
-                buffer = objects[i].vertexPositionBuffer;
+                buffer = objects[i].vertexNormalBuffer;
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
                 gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, buffer.itemSize, gl.FLOAT, false, 0, 0);
 
@@ -455,12 +476,18 @@
                 gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffer);
 
                 // Transform ---------------
-                var globalTrans = mat4.create();
-                mat4.identity(globalTrans);
-                mat4.multiply(globalTrans, camera.matrix);
-                mat4.multiply(globalTrans, objects[i].trans);
+                var mvMatrix = mat4.create();
+                mat4.identity(mvMatrix);
+                mat4.multiply(mvMatrix, camera.matrix);
+                mat4.multiply(mvMatrix, objects[i].trans);
                 gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, pMatrix);
-                gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, globalTrans);
+                gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, mvMatrix);
+
+                // normal matrix (not need on this exercise)
+                var normalMatrix = mat3.create();
+                mat4.toInverseMat3(mvMatrix, normalMatrix); // ?
+                mat3.transpose(normalMatrix);
+                gl.uniformMatrix3fv(shaderProgram.normalMatrixUniform, false, normalMatrix);
 
                 // Draw --------------------
                 gl.drawElements(gl.TRIANGLES, buffer.numItems, gl.UNSIGNED_SHORT, 0);
