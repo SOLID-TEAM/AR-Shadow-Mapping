@@ -43,7 +43,7 @@
 
             void main(void)
             {
-                gl_FragColor = vec4(gl_FragCoord.z,gl_FragCoord.z,gl_FragCoord.z, 1.0);//encodeFloat(gl_FragCoord.z);
+                gl_FragColor = encodeFloat(gl_FragCoord.z);
             }
         </script>
 
@@ -168,7 +168,7 @@
             var resources = {};
             var entities = [];
             var camera = new cam();
-            var lightPos = [0.0, 1.0, 0.0];
+            var lightPos = [0.0, 1.0, 1.0];
             var lightViewMatrix = mat4.create();
            
             var input = {
